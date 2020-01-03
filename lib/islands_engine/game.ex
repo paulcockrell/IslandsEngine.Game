@@ -28,6 +28,7 @@ defmodule IslandsEngine.Game do
       :error -> {:reply, :error, state_data}
     end
   end
+
   def handle_call({:position_island, player, key, row, col}, _from, state_data) do
     board = player_board(state_data, player)
     with {:ok, rules} <-
@@ -55,6 +56,29 @@ defmodule IslandsEngine.Game do
     end
   end
 
+  def handle_call({:set_islands, player}, _from, state_data) do
+    board = player_board(state_data, player)
+    with {:ok, rules} <- Rules.check(state_data.rules, {:set_islands, player}),
+         true         <- Board.all_islands_positioned?(board)
+    do
+      state_data
+      |> update_rules(rules)
+      |> reply_success({:ok, board})
+    else
+      :error -> {:reply, :error, state_data}
+      false  -> {:reply, {:error, :not_all_islands_positioned}, state_data}
+    end
+  end
+
+  def position_island(game, player, key, row, col) when player in @players, do:
+    GenServer.call(game, {:position_island, player, key, row, col})
+
+  def set_islands(game, player) when player in @players, do:
+    GenServer.call(game, {:set_islands, player})
+
+  def guess_coordinate(game, player, row, col) when player in @players, do:
+    GenServer.call(game, {:guess_coordinate, player, row, col})
+
   defp update_player2_name(state_data, name), do:
     put_in(state_data.player2.name, name)
 
@@ -62,11 +86,17 @@ defmodule IslandsEngine.Game do
 
   defp reply_success(state_data, reply), do: {:reply, reply, state_data}
 
-  def position_island(game, player, key, row, col) when player in @players, do:
-    GenServer.call(game, {:position_island, player, key, row, col})
-
   defp player_board(state_data, player), do: Map.get(state_data, player).board
 
   defp update_board(state_data, player, board), do:
     Map.update!(state_data, player, fn player -> %{player | board: board} end)
+
+  defp update_guesses(state_data, player_key, hit_or_miss, coordinate) do
+    update_in(state_datap[player_key].guesses, fn guesses ->
+      Guesses.add(guesses, hit_or_miss, coordinate)
+    end)
+  end
+
+  defp opponent(:player1), do: :player2
+  defp opponent(:player2), do: :player1
 end
