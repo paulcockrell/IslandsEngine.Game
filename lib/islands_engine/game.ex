@@ -1,9 +1,10 @@
 defmodule IslandsEngine.Game do
-  use GenServer
+  use GenServer, start: {__MODULE__, :start_link, []}, restart: :transient, type: :worker
 
   alias IslandsEngine.{Board, Guesses, Rules, Island, Rules, Coordinate}
 
   @players [:player1, :player2]
+  @timeout 60 * 60 * 24 * 1000
 
   def start_link(name) when is_binary(name), do:
     GenServer.start_link(__MODULE__, name, name: via_tuple(name))
@@ -11,9 +12,20 @@ defmodule IslandsEngine.Game do
   def via_tuple(name), do: {:via, Registry, {Registry.Game, name}}
 
   def init(name) do
+    send(self(), {:set_state, name})
+    {:ok, fresh_state(name)}
+  end
+
+  def terminate({:shutdown, :timeout}, state_data) do
+    :ets.delete(:game_state, state_data.player1.name)
+    :ok
+  end
+  def terminate(_reason, _state), do: :ok
+
+  defp fresh_state(name) do
     player1 = %{name: name, board: Board.new(), guesses: Guesses.new()}
     player2 = %{name: nil, board: Board.new(), guesses: Guesses.new()}
-    {:ok, %{player1: player1, player2: player2, rules: %Rules{}}}
+    %{player1: player1, player2: player2, rules: %Rules{}}
   end
 
   def add_player(game, name) when is_binary(name), do:
@@ -92,6 +104,18 @@ defmodule IslandsEngine.Game do
     end
   end
 
+  def handle_info(:timeout, state_data), do: {:stop, {:shutdown, :timeout}, state_data}
+
+  def handle_info({:set_state, name}, _state_data) do
+    state_data =
+    case :ets.lookup(:game_state, name) do
+      [] -> fresh_state(name)
+      [{_key, state}] -> state
+    end
+    :ets.insert(:game_state, {name, state_data})
+    {:noreply, state_data, @timeout}
+  end
+
   def position_island(game, player, key, row, col) when player in @players, do:
     GenServer.call(game, {:position_island, player, key, row, col})
 
@@ -106,7 +130,10 @@ defmodule IslandsEngine.Game do
 
   defp update_rules(state_data, rules), do: %{state_data | rules: rules}
 
-  defp reply_success(state_data, reply), do: {:reply, reply, state_data}
+  defp reply_success(state_data, reply) do
+    :ets.insert(:game_state, {state_data.player1.name, state_data})
+    {:reply, reply, state_data, @timeout}
+  end
 
   defp player_board(state_data, player), do: Map.get(state_data, player).board
 
